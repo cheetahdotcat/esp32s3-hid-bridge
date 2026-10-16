@@ -31,7 +31,8 @@ static tusb_desc_device_t s_device;
 static uint8_t s_configuration[CONFIG_BUFFER_SIZE];
 static uint8_t s_ms_os_20[MS_OS_20_BUFFER_SIZE];
 static uint16_t s_ms_os_20_size;
-static uint8_t s_bos[5U + 28U];
+/// BOS header, USB 2.0 Extension capability, and optional MS OS 2.0 platform capability.
+static uint8_t s_bos[5U + 7U + 28U];
 static char s_manufacturer[LVHB_MAX_STRING + 1U];
 static char s_product[LVHB_MAX_STRING + 1U];
 static char s_serial[LVHB_MAX_STRING + 1U] = LVHB_SERIAL_PREFIX "000000000000";
@@ -85,9 +86,13 @@ static void build_ms_os_20(void) {
     }
   }
 
+  // A USB 2.1 device must report a USB 2.0 Extension capability; Windows
+  // rejects a BOS without it, while Linux ignores the BOS.
+  const uint8_t usb20_extension[] = {7, TUSB_DESC_DEVICE_CAPABILITY, DEVICE_CAPABILITY_USB20_EXTENSION, 0x00, 0x00, 0x00, 0x00};
   if (function_count == 0U) {
-    const uint8_t empty_bos[] = {5, TUSB_DESC_BOS, 5, 0, 0};
-    memcpy(s_bos, empty_bos, sizeof(empty_bos));
+    const uint8_t header[] = {5, TUSB_DESC_BOS, U16_TO_U8S_LE(5U + sizeof(usb20_extension)), 1};
+    size_t bos_size = append(s_bos, 0, header, sizeof(header));
+    append(s_bos, bos_size, usb20_extension, sizeof(usb20_extension));
     s_ms_os_20_size = 0;
     return;
   }
@@ -109,7 +114,8 @@ static void build_ms_os_20(void) {
   }
 
   const uint8_t bos[] = {
-    5, TUSB_DESC_BOS, U16_TO_U8S_LE(sizeof(s_bos)), 1,
+    5, TUSB_DESC_BOS, U16_TO_U8S_LE(sizeof(s_bos)), 2,
+    7, TUSB_DESC_DEVICE_CAPABILITY, DEVICE_CAPABILITY_USB20_EXTENSION, 0x00, 0x00, 0x00, 0x00,
     // MS OS 2.0 platform capability, Windows 8.1 and newer.
     28, TUSB_DESC_DEVICE_CAPABILITY, DEVICE_CAPABILITY_PLATFORM, 0x00,
     0xDF, 0x60, 0xDD, 0xD8, 0x89, 0x45, 0xC7, 0x4C, 0x9C, 0xD2, 0x65, 0x9D, 0x9E, 0x64, 0x8A, 0x9F,

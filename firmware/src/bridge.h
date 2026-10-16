@@ -9,7 +9,7 @@
 
 #include "esp32_bridge_protocol.h"
 
-#define BRIDGE_FIRMWARE_VERSION "0.1.0"
+#define BRIDGE_FIRMWARE_VERSION "0.1.1"
 
 /// Interface numbers 0 and 1 always belong to CDC so the host COM port stays put.
 #define BRIDGE_CDC_INTERFACES 2U
