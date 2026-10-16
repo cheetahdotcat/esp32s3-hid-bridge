@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ESP32-S3 HID Bridge</title>
-  <meta name="description" content="Driverless virtual controllers, keyboard, and mouse for Sunshine game streaming, using an ESP32-S3 as real USB devices. Flash it from your browser.">
+  <meta name="description" content="Firmware and browser flasher for an ESP32-S3 that provides USB controllers, keyboard, and mouse for Sunshine game streaming.">
   <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
   <style>
     :root {
@@ -92,7 +92,7 @@
 <main>
   <header>
     <h1>ESP32-S3 HID Bridge</h1>
-    <p class="lead">Real USB controllers, keyboard, and mouse for <a href="https://github.com/LizardByte/Sunshine">Sunshine</a> game streaming, with no virtual-device driver or license on the host.</p>
+    <p class="lead">An ESP32-S3 connected to the streaming PC that provides USB controllers, keyboard, and mouse for <a href="https://github.com/LizardByte/Sunshine">Sunshine</a>.</p>
     <p class="note">An independent community project. Not affiliated with LizardByte, Espressif, Microsoft, or Sony.</p>
   </header>
 
@@ -101,7 +101,7 @@
     <div><strong>Moonlight</strong>Your controller, keyboard, and mouse input travels to the host.</div>
     <div><strong>Sunshine</strong>Hands the input to the bridge over a USB serial link.</div>
     <div><strong>ESP32-S3</strong>Plugged into the host, it shows up as real USB devices.</div>
-    <div><strong>Windows</strong>Uses its own built-in drivers. Games see a normal Xbox or PlayStation controller.</div>
+    <div><strong>Windows</strong>Loads its standard drivers for the devices. Games see an Xbox or PlayStation controller.</div>
   </div>
   <p>The bridge holds two devices at a time. Keyboard and mouse share one, which leaves one gamepad (Xbox, DualSense, DualShock 4, or Switch Pro). Without keyboard and mouse you get two gamepads, of which at most one can be Xbox.</p>
 
@@ -130,31 +130,31 @@
   <div class="grid">
     <div class="card board">
       <h3>Waveshare ESP32-S3-Zero</h3>
-      <p>Thumb-sized, USB-C straight to native USB. A cheap, good default.</p>
+      <p>Compact board with USB-C connected to native USB.</p>
       <p class="tags">4&nbsp;MB flash · BOOT + RESET buttons</p>
       <p><a href="https://www.waveshare.com/esp32-s3-zero.htm">Waveshare store</a> · <a href="https://docs.waveshare.com/ESP32-S3-Zero">docs</a></p>
     </div>
     <div class="card board">
       <h3>Seeed Studio XIAO ESP32S3</h3>
-      <p>Tiny and widely stocked, with native USB on USB-C.</p>
+      <p>Compact board with USB-C connected to native USB.</p>
       <p class="tags">8&nbsp;MB flash · BOOT + RESET buttons</p>
       <p><a href="https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html">Seeed store</a></p>
     </div>
     <div class="card board">
       <h3>LilyGO T-Dongle-S3</h3>
-      <p>Shaped like a USB stick with a USB-A plug: plug it straight into the PC.</p>
+      <p>USB stick form factor with a USB-A plug.</p>
       <p class="tags">16&nbsp;MB flash · BOOT button</p>
       <p><a href="https://lilygo.cc/en-us/products/t-dongle-s3">LilyGO store</a> · <a href="https://wiki.lilygo.cc/products/t-dongle-series/t-dongle-s3/">wiki</a></p>
     </div>
     <div class="card board">
       <h3>Adafruit QT Py ESP32-S3</h3>
-      <p>Well documented, from a US maker.</p>
+      <p>Compact board with USB-C connected to native USB.</p>
       <p class="tags">4&nbsp;MB flash + 2&nbsp;MB PSRAM · BOOT + RESET buttons</p>
       <p><a href="https://www.adafruit.com/product/5700">Adafruit store</a></p>
     </div>
     <div class="card board">
       <h3>Espressif ESP32-S3-DevKitC-1</h3>
-      <p>The reference board. Use its <code>USB</code> port, not <code>UART</code>. Avoid the <code>N32R8V</code> variant.</p>
+      <p>Espressif reference board. Use its <code>USB</code> port, not <code>UART</code>. The <code>N32R8V</code> variant is not supported.</p>
       <p class="tags">N8, N8R2, N8R8, N16R8 work</p>
       <p><a href="https://www.espressif.com/en/dev-board/esp32-s3-devkitc-1-en">Espressif (lists authorized sellers)</a> · <a href="https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide.html">docs</a></p>
     </div>

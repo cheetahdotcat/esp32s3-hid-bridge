@@ -1,9 +1,8 @@
 # ESP32-S3 libvirtualhid USB bridge
 
-Driverless virtual gamepads, keyboard, and mouse for Sunshine (or any libvirtualhid consumer) on Windows.
+USB gamepads, keyboard, and mouse for Sunshine (or any libvirtualhid consumer), provided by an ESP32-S3.
 An ESP32-S3 plugged into the streaming host enumerates as **real USB controllers**.
-Windows binds its inbox drivers to them (`xusb22` for XInput, `hidclass` for HID),
-so the host needs no ViGEmBus, no UMDF driver package, and no license.
+Windows binds its inbox drivers to them (`xusb22` for XInput, `hidclass` for HID).
 
 **Flash a board from your browser:** https://cheetahdotcat.github.io/esp32s3-hid-bridge/
 
@@ -65,7 +64,7 @@ adds **ESP32-S3 USB Bridge** as a Windows gamepad backend (`gamepad_driver = esp
 
 - On first start with a bridge attached and no backend chosen, Sunshine selects it automatically.
 - It routes gamepads, keyboard, and mouse through the bridge, disables the ViGEmBus fallback,
-  and hides Virtual HID Broker license notices.
+  and does not show Virtual HID Broker notices.
 - `esp32_bridge_port` sets the COM port; leave it empty to auto-detect.
 - Its CI builds a Windows installer (Actions → `build-Windows-AMD64` artifact).
 
