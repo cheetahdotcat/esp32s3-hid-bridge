@@ -1,0 +1,6 @@
+# Reference clones that are not part of this project.
+/sunshine/
+/esp32-wifi-virtual-hid/
+# Firmware build output; CI rebuilds the site image.
+/site/firmware/
+__pycache__/

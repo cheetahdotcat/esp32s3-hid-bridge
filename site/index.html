@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ESP32-S3 HID Bridge</title>
+  <meta name="description" content="Driverless virtual controllers, keyboard, and mouse for Sunshine game streaming, using an ESP32-S3 as real USB devices. Flash it from your browser.">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+  <style>
+    :root {
+      --bg: #f7f7f5;
+      --surface: #ffffff;
+      --text: #1d1d1f;
+      --muted: #5f6368;
+      --border: #e2e2de;
+      --accent: #0b6e4f;
+      --accent-text: #ffffff;
+      --warn-bg: #fff6e0;
+      --warn-border: #f0c96b;
+      --code-bg: #efefeb;
+      color-scheme: light;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #131416;
+        --surface: #1c1d20;
+        --text: #ececec;
+        --muted: #a3a6ab;
+        --border: #2e3034;
+        --accent: #4cc295;
+        --accent-text: #08130e;
+        --warn-bg: #2b2412;
+        --warn-border: #7a6224;
+        --code-bg: #26282c;
+        color-scheme: dark;
+      }
+    }
+    :root[data-theme="dark"] {
+      --bg: #131416;
+      --surface: #1c1d20;
+      --text: #ececec;
+      --muted: #a3a6ab;
+      --border: #2e3034;
+      --accent: #4cc295;
+      --accent-text: #08130e;
+      --warn-bg: #2b2412;
+      --warn-border: #7a6224;
+      --code-bg: #26282c;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    main { max-width: 860px; margin: 0 auto; padding: 48px 16px 64px; }
+    header h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.02em; }
+    header p.lead { font-size: 1.15rem; color: var(--muted); margin: 0 0 8px; max-width: 46rem; }
+    h2 { font-size: 1.35rem; margin: 48px 0 12px; letter-spacing: -0.01em; }
+    h3 { font-size: 1.05rem; margin: 20px 0 6px; }
+    p, li { max-width: 46rem; }
+    a { color: var(--accent); }
+    code { background: var(--code-bg); border-radius: 4px; padding: 1px 5px; font-size: 0.92em; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .flash { display: grid; gap: 16px; }
+    .flash ol { margin: 0; padding-left: 1.3rem; }
+    .flash li + li { margin-top: 6px; }
+    .install { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+    .button {
+      display: inline-block; background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px;
+      padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; text-decoration: none;
+    }
+    .note { color: var(--muted); font-size: 0.93rem; }
+    .warn { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 12px 14px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .board h3 { margin-top: 0; }
+    .board p { margin: 4px 0; font-size: 0.95rem; }
+    .board .tags { color: var(--muted); font-size: 0.88rem; }
+    .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+    .flow div { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; font-size: 0.95rem; }
+    .flow strong { display: block; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .table-wrap { overflow-x: auto; }
+    footer { margin-top: 56px; color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--border); padding-top: 16px; }
+    esp-web-install-button [slot="unsupported"], esp-web-install-button [slot="not-allowed"] { color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>ESP32-S3 HID Bridge</h1>
+    <p class="lead">Real USB controllers, keyboard, and mouse for <a href="https://github.com/LizardByte/Sunshine">Sunshine</a> game streaming, with no virtual-device driver or license on the host.</p>
+    <p class="note">An independent community project. Not affiliated with LizardByte, Espressif, Microsoft, or Sony.</p>
+  </header>
+
+  <h2>How it works</h2>
+  <div class="flow">
+    <div><strong>Moonlight</strong>Your controller, keyboard, and mouse input travels to the host.</div>
+    <div><strong>Sunshine</strong>Hands the input to the bridge over a USB serial link.</div>
+    <div><strong>ESP32-S3</strong>Plugged into the host, it shows up as real USB devices.</div>
+    <div><strong>Windows</strong>Uses its own built-in drivers. Games see a normal Xbox or PlayStation controller.</div>
+  </div>
+  <p>The bridge holds two devices at a time. Keyboard and mouse share one, which leaves one gamepad (Xbox, DualSense, DualShock 4, or Switch Pro). Without keyboard and mouse you get two gamepads, of which at most one can be Xbox.</p>
+
+  <h2 id="flash">Flash your ESP32-S3</h2>
+  <div class="card flash">
+    <ol>
+      <li>Use <strong>Chrome or Edge on a desktop</strong>. Firefox and Safari can't talk to USB serial devices.</li>
+      <li>Plug the board in with a <strong>USB data cable</strong> on its <em>native</em> USB port (on boards with two ports, the one labelled <code>USB</code>, not <code>UART</code>).</li>
+      <li>If the board already runs the bridge, or the browser shows no port: <strong>hold BOOT</strong>, plug it in (or tap RESET), then release BOOT.</li>
+      <li>Click <strong>Install</strong>, pick the port, and confirm. It takes about 30 seconds.</li>
+      <li>Unplug and replug the board. It now appears as <em>ESP32-S3 HID Bridge</em>.</li>
+    </ol>
+    <div class="install">
+      <esp-web-install-button manifest="manifest.json">
+        <button slot="activate" class="button">Install bridge firmware</button>
+        <span slot="unsupported">Your browser can't flash devices. Open this page in Chrome or Edge on a desktop.</span>
+        <span slot="not-allowed">Flashing needs a secure (https) page.</span>
+      </esp-web-install-button>
+      <span class="note">Firmware 0.1.0 · 4&nbsp;MB image, works on 4/8/16&nbsp;MB boards</span>
+    </div>
+    <div class="warn"><strong>Not supported:</strong> boards with <em>octal</em> flash, such as the ESP32-S3-DevKitC-1 <code>N32R8V</code> (WROOM-2 module), and boards whose only USB port goes through a CH340/CP2102 serial chip. The bridge needs the S3's native USB.</div>
+  </div>
+
+  <h2 id="buy">Where to get a board</h2>
+  <p>Any ESP32-S3 board works if its USB port connects to the chip's native USB. These are known to:</p>
+  <div class="grid">
+    <div class="card board">
+      <h3>Waveshare ESP32-S3-Zero</h3>
+      <p>Thumb-sized, USB-C straight to native USB. A cheap, good default.</p>
+      <p class="tags">4&nbsp;MB flash · BOOT + RESET buttons</p>
+      <p><a href="https://www.waveshare.com/esp32-s3-zero.htm">Waveshare store</a> · <a href="https://docs.waveshare.com/ESP32-S3-Zero">docs</a></p>
+    </div>
+    <div class="card board">
+      <h3>Seeed Studio XIAO ESP32S3</h3>
+      <p>Tiny and widely stocked, with native USB on USB-C.</p>
+      <p class="tags">8&nbsp;MB flash · BOOT + RESET buttons</p>
+      <p><a href="https://www.seeedstudio.com/XIAO-ESP32S3-p-5627.html">Seeed store</a></p>
+    </div>
+    <div class="card board">
+      <h3>LilyGO T-Dongle-S3</h3>
+      <p>Shaped like a USB stick with a USB-A plug: plug it straight into the PC.</p>
+      <p class="tags">16&nbsp;MB flash · BOOT button</p>
+      <p><a href="https://lilygo.cc/en-us/products/t-dongle-s3">LilyGO store</a> · <a href="https://wiki.lilygo.cc/products/t-dongle-series/t-dongle-s3/">wiki</a></p>
+    </div>
+    <div class="card board">
+      <h3>Adafruit QT Py ESP32-S3</h3>
+      <p>Well documented, from a US maker.</p>
+      <p class="tags">4&nbsp;MB flash + 2&nbsp;MB PSRAM · BOOT + RESET buttons</p>
+      <p><a href="https://www.adafruit.com/product/5700">Adafruit store</a></p>
+    </div>
+    <div class="card board">
+      <h3>Espressif ESP32-S3-DevKitC-1</h3>
+      <p>The reference board. Use its <code>USB</code> port, not <code>UART</code>. Avoid the <code>N32R8V</code> variant.</p>
+      <p class="tags">N8, N8R2, N8R8, N16R8 work</p>
+      <p><a href="https://www.espressif.com/en/dev-board/esp32-s3-devkitc-1-en">Espressif (lists authorized sellers)</a> · <a href="https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide.html">docs</a></p>
+    </div>
+  </div>
+  <p class="note">Prices and stock change often; check the store. Generic "ESP32-S3 SuperMini" or "N16R8" boards from marketplaces also work if they have native USB on USB-C and quad (not octal) flash.</p>
+
+  <h2 id="sunshine">Set up Sunshine</h2>
+  <ol>
+    <li>Install a Sunshine build with ESP32-S3 bridge support (see <a href="https://github.com/cheetahdotcat/Sunshine/tree/esp32-bridge">the esp32-bridge branch</a>).</li>
+    <li>Plug the bridge into the streaming PC <strong>before</strong> starting Sunshine.</li>
+    <li>On first start Sunshine selects <strong>ESP32-S3 USB Bridge</strong> as the gamepad backend by itself. You can also pick it under <em>Configuration → Input → Gamepad Backend</em>.</li>
+    <li>Leave <em>ESP32-S3 Bridge Port</em> empty to detect the bridge automatically, or enter its COM port.</li>
+  </ol>
+
+  <h2>Troubleshooting</h2>
+  <div class="table-wrap">
+    <table>
+      <tr><th>Symptom</th><th>Fix</th></tr>
+      <tr><td>No port appears when flashing</td><td>Hold BOOT while plugging in. Try another cable; many USB-C cables are charge-only.</td></tr>
+      <tr><td>Flashing works but the board doesn't show up as a bridge</td><td>Unplug and replug it. Make sure you're on the native USB port.</td></tr>
+      <tr><td>Sunshine doesn't use the bridge</td><td>Plug the bridge in before starting Sunshine, and check that the gamepad backend is set to ESP32-S3 USB Bridge.</td></tr>
+      <tr><td>Controllers briefly disconnect when someone joins</td><td>Expected: every device change makes the bridge reconnect for about a second.</td></tr>
+      <tr><td>A second gamepad doesn't appear</td><td>The bridge is full. Keyboard and mouse use one of its two slots, and only one Xbox controller fits.</td></tr>
+    </table>
+  </div>
+
+  <footer>
+    Firmware and host backend are open source under the MIT license.
+    Built on <a href="https://github.com/LizardByte/libvirtualhid">libvirtualhid</a>, <a href="https://github.com/hathach/tinyusb">TinyUSB</a>, and <a href="https://github.com/esphome/esp-web-tools">ESP Web Tools</a>.
+  </footer>
+</main>
+</body>
+</html>

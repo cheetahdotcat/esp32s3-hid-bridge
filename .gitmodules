@@ -1,0 +1,4 @@
+[submodule "libvirtualhid"]
+	path = libvirtualhid
+	url = https://github.com/cheetahdotcat/libvirtualhid.git
+	branch = esp32-bridge
