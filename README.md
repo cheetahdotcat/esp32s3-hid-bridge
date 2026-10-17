@@ -37,7 +37,7 @@ Moonlight client ──network──▶ Sunshine ──libvirtualhid (BackendKin
 ```cpp
 lvh::RuntimeOptions options;
 options.backend = lvh::BackendKind::esp32_bridge;
-options.esp32_bridge_port = "";  // auto-detect; or "COM5" / "/dev/ttyACM0"
+options.esp32_bridge.port = "";  // auto-detect; or "COM5" / "/dev/ttyACM0"
 auto runtime = lvh::Runtime::create(options);
 auto pad = runtime->create_gamepad(lvh::profiles::xbox_360());  // re-enumerates the bridge
 ```
@@ -45,13 +45,13 @@ auto pad = runtime->create_gamepad(lvh::profiles::xbox_360());  // re-enumerates
 ### Other consumers: automatic selection
 
 A runtime created with `BackendKind::platform_default` switches to the bridge
-on its own, unless `RuntimeOptions::esp32_bridge_autodetect` is `false`:
+on its own, unless `Esp32BridgeOptions::autodetect` is `false`:
 
 | Condition (checked in order)                       | Backend used      |
 |----------------------------------------------------|-------------------|
 | `LVH_BACKEND=platform`                             | platform          |
 | `LVH_BACKEND=esp32_bridge`                         | bridge            |
-| `LVH_ESP32_PORT=COM5` (or `esp32_bridge_port`) set | bridge, that port |
+| `LVH_ESP32_PORT=COM5` (or `esp32_bridge.port`) set | bridge, that port |
 | a bridge with USB serial `LVHB-*` is attached      | bridge            |
 | otherwise                                          | platform          |
 
@@ -145,7 +145,7 @@ through real USB hardware, including on the UAC prompt and the sign-in screen.
   `%ProgramData%\libvirtualhid\esp32-bridge` (Windows; protected DACL for
   SYSTEM, Administrators, and the file owner) or
   `$XDG_CONFIG_HOME/libvirtualhid/esp32-bridge` (mode 0600).
-  `RuntimeOptions::esp32_bridge_credential_dir` overrides the directory. On
+  `Esp32BridgeOptions::credential_dir` overrides the directory. On
   Linux and macOS the port is opened with `TIOCEXCL`; Windows COM ports are
   exclusive already.
 - **Settings:** the flasher site's [Pairing and settings](https://cheetahdotcat.github.io/esp32s3-hid-bridge/#configure)
