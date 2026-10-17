@@ -86,6 +86,13 @@
     .table-wrap { overflow-x: auto; }
     footer { margin-top: 56px; color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--border); padding-top: 16px; }
     esp-web-install-button [slot="unsupported"], esp-web-install-button [slot="not-allowed"] { color: var(--muted); }
+    .button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); padding: 6px 12px; font-weight: 500; }
+    .button:disabled { opacity: 0.5; cursor: default; }
+    .configure { display: grid; gap: 12px; }
+    .configure .row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+    #cfg-status { min-height: 1.6em; }
+    #cfg-status.prompt { font-weight: 600; color: var(--accent); }
+    td.key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88rem; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -167,7 +174,34 @@
     <li>Plug the bridge into the streaming PC <strong>before</strong> starting Sunshine.</li>
     <li>On first start Sunshine selects <strong>ESP32-S3 USB Bridge</strong> as the gamepad backend by itself. You can also pick it under <em>Configuration → Input → Gamepad Backend</em>.</li>
     <li>Leave <em>ESP32-S3 Bridge Port</em> empty to detect the bridge automatically, or enter its COM port.</li>
+    <li>The first time Sunshine connects, the bridge LED blinks quickly. <strong>Press BOOT</strong> on the bridge within 30 seconds to pair it with this PC. Until then the bridge ignores input.</li>
   </ol>
+
+  <h2 id="configure">Pairing and settings</h2>
+  <p>The bridge only accepts input from programs it is paired with, so other software on the PC can't use it to type or click. It stores up to four pairings. Pairing, removing a pairing, and turning the requirement off all need a press of the bridge's <strong>BOOT</strong> button. Holding BOOT for 10 seconds removes every pairing.</p>
+  <div class="card configure">
+    <p class="note" style="margin:0">Quit Sunshine first: only one program can open the bridge's serial port at a time. Chrome or Edge on a desktop is required.</p>
+    <div class="row">
+      <button id="cfg-connect" class="button">Connect to bridge</button>
+      <span id="cfg-device" class="note"></span>
+    </div>
+    <div id="cfg-status" class="note" role="status" aria-live="polite"></div>
+    <div id="cfg-panel" hidden>
+      <div class="row">
+        <span id="cfg-require"></span>
+        <button id="cfg-toggle" class="button secondary"></button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Paired host</th><th>Key id</th><th></th></tr></thead>
+          <tbody id="cfg-pairings"></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button id="cfg-revoke-all" class="button secondary">Remove all pairings</button>
+      </div>
+    </div>
+  </div>
 
   <h2>Troubleshooting</h2>
   <div class="table-wrap">
@@ -177,6 +211,8 @@
       <tr><td>Flashing works but the board doesn't show up as a bridge</td><td>Unplug and replug it. Make sure you're on the native USB port.</td></tr>
       <tr><td>Sunshine doesn't use the bridge</td><td>Plug the bridge in before starting Sunshine, and check that the gamepad backend is set to ESP32-S3 USB Bridge.</td></tr>
       <tr><td>Controllers briefly disconnect when someone joins</td><td>Expected: every device change makes the bridge reconnect for about a second.</td></tr>
+      <tr><td>Sunshine log says the bridge is not paired</td><td>Press BOOT on the bridge while its LED blinks quickly. If it has four pairings already, remove one under <a href="#configure">Pairing and settings</a>.</td></tr>
+      <tr><td>Connecting here fails with "update the firmware"</td><td>The board runs firmware older than 0.2.0. Flash the current firmware above.</td></tr>
       <tr><td>A second gamepad doesn't appear</td><td>The bridge is full. Keyboard and mouse use one of its two slots, and only one Xbox controller fits.</td></tr>
     </table>
   </div>
@@ -186,5 +222,221 @@
     Built on <a href="https://github.com/LizardByte/libvirtualhid">libvirtualhid</a>, <a href="https://github.com/hathach/tinyusb">TinyUSB</a>, and <a href="https://github.com/esphome/esp-web-tools">ESP Web Tools</a>.
   </footer>
 </main>
+<script type="module">
+  // Minimal client for the bridge protocol (libvirtualhid/src/platform/esp32/esp32_bridge_protocol.h).
+  const PROTOCOL_VERSION = 2;
+  const MSG = { HELLO: 0x01, CONFIG_GET: 0x08, CONFIG_SET: 0x09, HELLO_ACK: 0x81, ACK: 0x82, CONFIRM_RESULT: 0x94, CONFIG: 0x95 };
+  const OP = { REQUIRE: 1, REVOKE: 2, REVOKE_ALL: 3 };
+  const STATUS = { 1: "bad request", 5: "update the firmware", 7: "another request is waiting for BOOT", 9: "BOOT was not pressed in time", 10: "pairing not found" };
+  const $ = (id) => document.getElementById(id);
+
+  function crc16(bytes) {
+    let crc = 0xffff;
+    for (const byte of bytes) {
+      crc ^= byte << 8;
+      for (let bit = 0; bit < 8; bit++) crc = crc & 0x8000 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+    return crc;
+  }
+  function cobsEncode(data) {
+    const out = [0];
+    let codeIndex = 0, code = 1;
+    for (const byte of data) {
+      if (byte === 0) { out[codeIndex] = code; codeIndex = out.length; out.push(0); code = 1; continue; }
+      out.push(byte);
+      if (++code === 0xff) { out[codeIndex] = code; codeIndex = out.length; out.push(0); code = 1; }
+    }
+    out[codeIndex] = code;
+    out.push(0);
+    return new Uint8Array(out);
+  }
+  function cobsDecode(data) {
+    const out = [];
+    let index = 0;
+    while (index < data.length) {
+      const code = data[index++];
+      if (code === 0 || index + code - 1 > data.length) return null;
+      for (let i = 1; i < code; i++) out.push(data[index++]);
+      if (code !== 0xff && index < data.length) out.push(0);
+    }
+    return new Uint8Array(out);
+  }
+  const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+  class Bridge {
+    constructor(port) { this.port = port; this.sequence = 0; this.waiters = []; this.buffer = []; }
+    async open() {
+      await this.port.open({ baudRate: 115200 });
+      await this.port.setSignals({ dataTerminalReady: true });
+      this.writer = this.port.writable.getWriter();
+      this.reader = this.port.readable.getReader();
+      this.readLoop();
+    }
+    async readLoop() {
+      try {
+        for (;;) {
+          const { value, done } = await this.reader.read();
+          if (done) break;
+          for (const byte of value) {
+            if (byte !== 0) { this.buffer.push(byte); continue; }
+            const frame = cobsDecode(this.buffer);
+            this.buffer = [];
+            if (!frame || frame.length < 4) continue;
+            const crc = frame[frame.length - 2] | (frame[frame.length - 1] << 8);
+            if (crc16(frame.subarray(0, frame.length - 2)) !== crc) continue;
+            this.dispatch(frame[0], frame[1], frame.subarray(2, frame.length - 2));
+          }
+        }
+      } catch (error) {
+        this.fail(error);
+      }
+      this.fail(new Error("the bridge disconnected"));
+    }
+    dispatch(type, sequence, body) {
+      const index = this.waiters.findIndex((w) => w.match(type, body));
+      if (index >= 0) this.waiters.splice(index, 1)[0].resolve(body);
+    }
+    fail(error) { for (const w of this.waiters.splice(0)) w.reject(error); }
+    wait(match, timeout) {
+      return new Promise((resolve, reject) => {
+        const waiter = { match, resolve: (b) => { clearTimeout(timer); resolve(b); }, reject: (e) => { clearTimeout(timer); reject(e); } };
+        const timer = setTimeout(() => {
+          const index = this.waiters.indexOf(waiter);
+          if (index >= 0) this.waiters.splice(index, 1);
+          reject(new Error("the bridge did not answer"));
+        }, timeout);
+        this.waiters.push(waiter);
+      });
+    }
+    async send(type, payload = []) {
+      const sequence = this.sequence;
+      this.sequence = (this.sequence + 1) & 0xff;
+      const frame = [type, sequence, ...payload];
+      const crc = crc16(frame);
+      await this.writer.write(cobsEncode([...frame, crc & 0xff, crc >> 8]));
+      return sequence;
+    }
+    async request(type, payload, matchReply, timeout = 2000) {
+      // send() takes this.sequence; fix it before the reply can arrive.
+      const sequence = this.sequence;
+      const ack = (t, b) => t === MSG.ACK && b[0] === type && b[1] === sequence;
+      const reply = this.wait((t, b) => ack(t, b) || (matchReply && matchReply(t, b)), timeout);
+      await this.send(type, payload);
+      return reply;
+    }
+    async close() {
+      try { await this.reader.cancel(); } catch {}
+      try { this.reader.releaseLock(); this.writer.releaseLock(); await this.port.close(); } catch {}
+    }
+  }
+
+  let bridge = null;
+  let config = null;
+  let busy = false;
+
+  function setStatus(text, prompt = false) {
+    $("cfg-status").textContent = text;
+    $("cfg-status").className = prompt ? "prompt" : "note";
+  }
+  function setBusy(value) {
+    busy = value;
+    for (const button of document.querySelectorAll("#cfg-panel button")) button.disabled = value;
+  }
+
+  function render() {
+    $("cfg-panel").hidden = false;
+    const required = (config.flags & 1) !== 0;
+    $("cfg-require").textContent = required ? "Pairing is required." : "Pairing is off: any program on the PC can use the bridge.";
+    $("cfg-toggle").textContent = required ? "Turn pairing off" : "Require pairing";
+    const body = $("cfg-pairings");
+    body.replaceChildren();
+    if (config.pairings.length === 0) {
+      const row = body.insertRow();
+      const cell = row.insertCell();
+      cell.colSpan = 3;
+      cell.className = "note";
+      cell.textContent = "No paired hosts yet. Start Sunshine and press BOOT when the LED blinks quickly.";
+    }
+    for (const pairing of config.pairings) {
+      const row = body.insertRow();
+      row.insertCell().textContent = pairing.name || "(unnamed)";
+      const key = row.insertCell();
+      key.className = "key";
+      key.textContent = hex(pairing.keyId);
+      const button = document.createElement("button");
+      button.className = "button secondary";
+      button.textContent = "Remove";
+      button.addEventListener("click", () => change([OP.REVOKE, ...pairing.keyId], `Removed ${pairing.name || "the pairing"}.`));
+      row.insertCell().append(button);
+    }
+    $("cfg-revoke-all").disabled = busy || config.pairings.length === 0;
+  }
+
+  async function refresh() {
+    const body = await bridge.request(MSG.CONFIG_GET, [], (t) => t === MSG.CONFIG);
+    const pairings = [];
+    let offset = 2;
+    for (let i = 0; i < body[1]; i++) {
+      const length = body[offset + 8];
+      pairings.push({ keyId: body.slice(offset, offset + 8), name: new TextDecoder().decode(body.subarray(offset + 9, offset + 9 + length)) });
+      offset += 9 + length;
+    }
+    config = { flags: body[0], pairings };
+    render();
+  }
+
+  async function change(payload, doneText) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const ack = await bridge.request(MSG.CONFIG_SET, payload);
+      if (ack[2] !== 0) throw new Error(STATUS[ack[2]] || `status ${ack[2]}`);
+      setStatus("Press BOOT on the bridge within 30 seconds to confirm.", true);
+      const result = await bridge.wait((t, b) => t === MSG.CONFIRM_RESULT && b[0] === MSG.CONFIG_SET, 35000);
+      if (result[1] !== 0) throw new Error(STATUS[result[1]] || `status ${result[1]}`);
+      setStatus(doneText);
+    } catch (error) {
+      setStatus(`Not changed: ${error.message}.`);
+    } finally {
+      setBusy(false);
+      try { await refresh(); } catch {}
+    }
+  }
+
+  async function connect() {
+    if (!("serial" in navigator)) {
+      setStatus("This browser can't open serial ports. Use Chrome or Edge on a desktop.");
+      return;
+    }
+    if (bridge) { await bridge.close(); bridge = null; }
+    let port;
+    try {
+      // The bridge's VID depends on its current layout (Espressif, Sony, or Nintendo).
+      port = await navigator.serial.requestPort({ filters: [{ usbVendorId: 0x303a }, { usbVendorId: 0x054c }, { usbVendorId: 0x057e }] });
+    } catch {
+      return;
+    }
+    try {
+      bridge = new Bridge(port);
+      await bridge.open();
+      const hello = await bridge.request(MSG.HELLO, [PROTOCOL_VERSION & 0xff, PROTOCOL_VERSION >> 8], (t) => t === MSG.HELLO_ACK);
+      if (hello.length < 33) throw new Error(STATUS[hello[2]] || "unexpected reply; update the firmware");
+      const firmware = new TextDecoder().decode(hello.subarray(33));
+      $("cfg-device").textContent = `Bridge ${hex(hello.subarray(27, 33)).toUpperCase()} · firmware ${firmware}`;
+      setStatus("");
+      await refresh();
+    } catch (error) {
+      setStatus(`Could not talk to the bridge: ${error.message}. Is Sunshine still running?`);
+      if (bridge) { await bridge.close(); bridge = null; }
+    }
+  }
+
+  $("cfg-connect").addEventListener("click", connect);
+  $("cfg-toggle").addEventListener("click", () => {
+    const required = (config.flags & 1) !== 0;
+    change([OP.REQUIRE, required ? 0 : 1], required ? "Pairing is off." : "Pairing is required again.");
+  });
+  $("cfg-revoke-all").addEventListener("click", () => change([OP.REVOKE_ALL], "Removed all pairings."));
+</script>
 </body>
 </html>

@@ -126,6 +126,41 @@ Profile mapping:
   `create_gamepad` blocks until the bridge is back. The first time a new
   layout appears, Windows driver setup can take several seconds.
 
+## Pairing
+
+The bridge only accepts layout and input frames from paired hosts. Without
+this, any program on the PC that can open the COM port could type and click
+through real USB hardware, including on the UAC prompt and the sign-in screen.
+
+- **Pairing:** a host without a stored pairing sends `PAIR`. The LED blinks
+  quickly, and the user has 30 s to press **BOOT**. The bridge then creates a
+  random 32-byte secret, stores it in NVS, and returns it once. It keeps up to
+  four pairings.
+- **Every connection:** `HELLO_ACK` carries a fresh nonce and the bridge's
+  device id. The host answers with
+  `HMAC-SHA256(secret, "LVHB-AUTH" || nonce || key_id || device_id)`. Until it
+  does, layout requests get `UNAUTHORIZED` and input reports are dropped.
+  Closing the port ends the session.
+- **Host storage:** libvirtualhid keeps one file per bridge in
+  `%ProgramData%\libvirtualhid\esp32-bridge` (Windows; protected DACL for
+  SYSTEM, Administrators, and the file owner) or
+  `$XDG_CONFIG_HOME/libvirtualhid/esp32-bridge` (mode 0600).
+  `RuntimeOptions::esp32_bridge_credential_dir` overrides the directory. On
+  Linux and macOS the port is opened with `TIOCEXCL`; Windows COM ports are
+  exclusive already.
+- **Settings:** the flasher site's [Pairing and settings](https://cheetahdotcat.github.io/esp32s3-hid-bridge/#configure)
+  section (or `tools/bridge_probe.py config|unpair|unpair-all|require`) lists
+  pairings, removes them, and turns the requirement off or on. Every change
+  needs a BOOT press. Holding BOOT for 10 s removes all pairings and turns the
+  requirement back on.
+- **Limits:** this keeps out other non-admin programs and other user accounts.
+  It does not protect against software running as administrator, which can
+  read the stored secret or inject input in other ways.
+
+When the bridge waits for pairing, `create_gamepad()`, `create_keyboard()`, and
+`create_mouse()` still succeed. The layout is applied as soon as the user
+presses BOOT, and input sent before that is dropped.
+
 ## Safety behavior
 
 - The host pings every second. If the host is silent for 3 s, the firmware
@@ -158,6 +193,8 @@ set with `-DBRIDGE_LED_GPIO=<pin>` (`-1` disables the LED), `-DBRIDGE_LED_KIND=1
 | Host connected, no slots yet | slow blink (1 s) | blue |
 | Slots enumerated, host alive | on, blinks off on input | green, blinks off on input |
 | Host silent, neutral reports sent | fast blink (200 ms) | amber |
+| Waiting for BOOT to confirm pairing or a setting | very fast blink (100 ms) | blinking purple |
+| BOOT held longer than 3 s (keep holding to 10 s to remove all pairings) | on | white |
 
 The **native** USB port is the bridge. Once the firmware runs, TinyUSB owns that
 port, so the ROM's USB-Serial/JTAG (`303a:1001`) disappears. To reflash, hold
@@ -173,7 +210,10 @@ python3 tools/bridge_probe.py hello
 python3 tools/bridge_probe.py xinput --seconds 20   # watch joy.cpl / gamepad-tester.com
 python3 tools/bridge_probe.py kbm                   # types "hello", moves the cursor in a square
 python3 tools/bridge_probe.py reset
+python3 tools/bridge_probe.py config                # pairing setting and paired hosts
 ```
+
+The first command pairs the probe with the bridge: press BOOT when asked.
 
 ## Status and what still needs hardware
 

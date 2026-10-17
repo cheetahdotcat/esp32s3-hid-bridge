@@ -10,22 +10,39 @@ Examples:
     bridge_probe.py xinput --seconds 20     # one XInput pad; press A every second
     bridge_probe.py kbm                     # keyboard+mouse; types "hello" and draws a square
     bridge_probe.py reset                   # drop all slots
+    bridge_probe.py config                  # show the pairing setting and paired hosts
+    bridge_probe.py unpair 1a2b3c4d5e6f7a8b # remove a pairing (confirm with BOOT)
+    bridge_probe.py require off             # accept unpaired hosts (confirm with BOOT)
+
+The bridge only accepts input from paired hosts unless pairing was turned
+off. The first run asks the bridge to pair: press BOOT on the bridge. The
+secret is stored where libvirtualhid looks for it
+($XDG_CONFIG_HOME/libvirtualhid/esp32-bridge, mode 0600).
 Requires pyserial (pip install pyserial).
 """
 
 import argparse
 import glob
+import hashlib
+import hmac
 import os
+import socket
 import struct
 import sys
 import time
 
 import serial
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 SERIAL_PREFIX = "LVHB-"
+AUTH_CONTEXT = b"LVHB-AUTH"
+CONFIRM_WINDOW_S = 30
 
 MSG_HELLO = 0x01
+MSG_AUTH = 0x06
+MSG_PAIR = 0x07
+MSG_CONFIG_GET = 0x08
+MSG_CONFIG_SET = 0x09
 MSG_LAYOUT_BEGIN = 0x02
 MSG_LAYOUT_SLOT = 0x03
 MSG_LAYOUT_COMMIT = 0x05
@@ -37,6 +54,16 @@ MSG_OUTPUT_REPORT = 0x90
 MSG_STATUS = 0x91
 MSG_PONG = 0x92
 MSG_LOG = 0x93
+MSG_CONFIRM_RESULT = 0x94
+MSG_CONFIG = 0x95
+
+AUTH_PAIRING_REQUIRED = 0x01
+AUTH_AUTHORIZED = 0x02
+CONFIG_REQUIRE_PAIRING = 1
+CONFIG_REVOKE = 2
+CONFIG_REVOKE_ALL = 3
+STATUS_NAMES = {0: "ok", 1: "bad request", 2: "bad state", 3: "invalid layout", 4: "too large", 5: "version mismatch",
+                6: "unauthorized", 7: "busy", 8: "all pairing slots in use", 9: "BOOT was not pressed in time", 10: "not found"}
 
 SLOT_XINPUT = 1
 SLOT_KEYBOARD_MOUSE = 3
@@ -87,6 +114,29 @@ def cobs_decode(data: bytes) -> bytes:
         if code != 0xFF and index < len(data):
             out.append(0)
     return bytes(out)
+
+
+def credential_path(device_id: str) -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "libvirtualhid", "esp32-bridge", f"bridge-{device_id}.key")
+
+
+def load_credential(device_id: str):
+    try:
+        with open(credential_path(device_id), encoding="ascii") as handle:
+            key_id, secret = handle.read().split()
+        return bytes.fromhex(key_id), bytes.fromhex(secret)
+    except (OSError, ValueError):
+        return None
+
+
+def save_credential(device_id: str, key_id: bytes, secret: bytes):
+    path = credential_path(device_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="ascii") as handle:
+        handle.write(f"{key_id.hex()} {secret.hex()}\n")
+    os.replace(path + ".tmp", path)
 
 
 def find_port() -> str:
@@ -167,12 +217,59 @@ class Bridge:
             self.show(frame_type, body)
         raise TimeoutError(f"no reply to message 0x{message_type:02x}")
 
-    def hello(self) -> int:
+    def hello(self, authenticate: bool = True) -> int:
         body = self.request(MSG_HELLO, struct.pack("<H", PROTOCOL_VERSION), MSG_HELLO_ACK)
-        version, max_slots, mounted, generation, max_descriptor = struct.unpack("<HBBIH", body[:10])
-        print(f"bridge {self.port_name}: protocol {version}, firmware {body[10:].decode(errors='replace')}, "
-              f"{max_slots} slots, mounted={mounted}, generation={generation}, max descriptor {max_descriptor}")
+        version, max_slots, mounted, generation, max_descriptor, flags = struct.unpack("<HBBIHB", body[:11])
+        nonce, device = body[11:27], body[27:33]
+        self.device_id = device.hex().upper()
+        print(f"bridge {self.port_name} ({self.device_id}): protocol {version}, firmware {body[33:].decode(errors='replace')}, "
+              f"{max_slots} slots, mounted={mounted}, generation={generation}, max descriptor {max_descriptor}, "
+              f"pairing {'required' if flags & AUTH_PAIRING_REQUIRED else 'off'}")
+        if authenticate and not flags & AUTH_AUTHORIZED:
+            self.authenticate(nonce, device)
         return generation
+
+    def authenticate(self, nonce: bytes, device: bytes):
+        credential = load_credential(self.device_id)
+        if credential is not None:
+            key_id, secret = credential
+            mac = hmac.new(secret, AUTH_CONTEXT + nonce + key_id + device, hashlib.sha256).digest()
+            if self.request(MSG_AUTH, key_id + mac, MSG_ACK)[2] == 0:
+                return
+            print("the bridge no longer knows this host's pairing; pairing again")
+        self.pair()
+
+    def pair(self):
+        name = f"bridge_probe on {socket.gethostname()}".encode()[:32]
+        self.check(self.request(MSG_PAIR, bytes([len(name)]) + name, MSG_ACK))
+        print(f"press BOOT on the bridge within {CONFIRM_WINDOW_S} s to pair this host")
+        result = self.confirm_result(MSG_PAIR)
+        save_credential(self.device_id, result[2:10], result[10:42])
+        print(f"paired; key id {result[2:10].hex()} stored in {credential_path(self.device_id)}")
+
+    def confirm_result(self, request_type: int) -> bytes:
+        for frame_type, _, body in self.frames(CONFIRM_WINDOW_S + 5):
+            if frame_type == MSG_CONFIRM_RESULT and body[0] == request_type:
+                if body[1] != 0:
+                    sys.exit(f"bridge did not apply the request: {STATUS_NAMES.get(body[1], body[1])}")
+                return body
+            self.show(frame_type, body)
+        sys.exit("no confirmation result from the bridge")
+
+    def show_config(self):
+        body = self.request(MSG_CONFIG_GET, b"", MSG_CONFIG)
+        print(f"pairing {'required' if body[0] & AUTH_PAIRING_REQUIRED else 'off'}, {body[1]} paired host(s)")
+        offset = 2
+        for _ in range(body[1]):
+            key_id, length = body[offset:offset + 8], body[offset + 8]
+            print(f"  {key_id.hex()}  {body[offset + 9:offset + 9 + length].decode(errors='replace')}")
+            offset += 9 + length
+
+    def configure(self, payload: bytes):
+        self.check(self.request(MSG_CONFIG_SET, payload, MSG_ACK))
+        print(f"press BOOT on the bridge within {CONFIRM_WINDOW_S} s to confirm")
+        self.confirm_result(MSG_CONFIG_SET)
+        print("done")
 
     def apply(self, slots, generation: int):
         name = b"ESP32-S3 HID Bridge"
@@ -192,7 +289,7 @@ class Bridge:
     @staticmethod
     def check(ack: bytes):
         if ack[2] != 0:
-            sys.exit(f"bridge rejected message 0x{ack[0]:02x} with status {ack[2]}")
+            sys.exit(f"bridge rejected message 0x{ack[0]:02x}: {STATUS_NAMES.get(ack[2], ack[2])}")
 
     @staticmethod
     def show(frame_type: int, body: bytes):
@@ -237,16 +334,30 @@ def keyboard_mouse_demo(bridge: "Bridge", generation: int):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=["hello", "xinput", "kbm", "reset"])
+    parser.add_argument("command", choices=["hello", "xinput", "kbm", "reset", "config", "unpair", "unpair-all", "require"])
+    parser.add_argument("argument", nargs="?", help="key id for unpair, on/off for require")
     parser.add_argument("--port", help="serial port (default: auto-detect by USB serial " + SERIAL_PREFIX + "*)")
     parser.add_argument("--seconds", type=float, default=15.0)
     args = parser.parse_args()
 
     bridge = Bridge(args.port or find_port())
-    generation = bridge.hello()
+    configuring = args.command in ("config", "unpair", "unpair-all", "require")
+    generation = bridge.hello(authenticate=not configuring)
     next_generation = (generation + 1) & 0xFFFFFFFF or 1
 
-    if args.command == "reset":
+    if args.command == "config":
+        bridge.show_config()
+    elif args.command == "unpair":
+        if not args.argument:
+            sys.exit("unpair needs a key id (see: bridge_probe.py config)")
+        bridge.configure(bytes([CONFIG_REVOKE]) + bytes.fromhex(args.argument))
+    elif args.command == "unpair-all":
+        bridge.configure(bytes([CONFIG_REVOKE_ALL]))
+    elif args.command == "require":
+        if args.argument not in ("on", "off"):
+            sys.exit("require needs on or off")
+        bridge.configure(bytes([CONFIG_REQUIRE_PAIRING, 1 if args.argument == "on" else 0]))
+    elif args.command == "reset":
         bridge.apply([], next_generation)
     elif args.command == "kbm":
         keyboard_mouse_demo(bridge, next_generation)

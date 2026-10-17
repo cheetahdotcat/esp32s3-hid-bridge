@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0
+
+- Host pairing (protocol version 2). The bridge only accepts input from paired
+  hosts; pairing and every settings change are confirmed with the BOOT button.
+  Up to four pairings; holding BOOT for 10 s removes all of them.
+- The flasher site can list and remove pairings and turn the requirement off.
+- New LED states for "waiting for BOOT" and "BOOT held".
+- Hosts need libvirtualhid with protocol 2 (Sunshine `esp32-bridge` branch from
+  this release on).
+
 ## 0.1.2
 
 - Status LED. The default image drives a single-colour LED on GPIO21 (Seeed XIAO

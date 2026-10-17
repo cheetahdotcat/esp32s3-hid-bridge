@@ -69,6 +69,10 @@ static uint8_t s_tx_sequence;
 static TickType_t s_last_host_frame;
 static bool s_neutralized;
 static volatile bool s_host_connected;
+static uint8_t s_device_id[LVHB_DEVICE_ID_SIZE];
+static volatile bool s_authorized;  ///< This host session may send layout and input frames.
+static bool s_session_has_key;
+static uint8_t s_session_key[LVHB_KEY_ID_SIZE];
 
 static void send_frame(uint8_t type, const uint8_t *payload, size_t size) {
   static uint8_t encoded[LVHB_MAX_ENCODED_FRAME];
@@ -525,8 +529,16 @@ static void handle_frame(const uint8_t *frame, size_t payload_size) {
   const uint8_t type = frame[0];
   const uint8_t sequence = frame[1];
   const uint8_t *payload = frame + 2;
-  s_last_host_frame = xTaskGetTickCount();
-  s_neutralized = false;
+  // Only an authorized host keeps the slots alive.
+  if (s_authorized) {
+    s_last_host_frame = xTaskGetTickCount();
+    s_neutralized = false;
+  }
+
+  if (!s_authorized && (type == LVHB_MSG_LAYOUT_BEGIN || type == LVHB_MSG_LAYOUT_SLOT || type == LVHB_MSG_LAYOUT_FEATURE || type == LVHB_MSG_LAYOUT_COMMIT)) {
+    send_ack(type, sequence, LVHB_STATUS_UNAUTHORIZED);
+    return;
+  }
 
   switch (type) {
     case LVHB_MSG_HELLO:
@@ -535,7 +547,14 @@ static void handle_frame(const uint8_t *frame, size_t payload_size) {
           send_ack(type, sequence, LVHB_STATUS_VERSION_MISMATCH);
           break;
         }
-        uint8_t reply[10U + sizeof(BRIDGE_FIRMWARE_VERSION)];
+        // Every handshake starts a new session.
+        s_authorized = !bridge_pairing_required();
+        s_session_has_key = false;
+        if (s_authorized) {
+          s_last_host_frame = xTaskGetTickCount();
+          s_neutralized = false;
+        }
+        uint8_t reply[11U + LVHB_NONCE_SIZE + LVHB_DEVICE_ID_SIZE + sizeof(BRIDGE_FIRMWARE_VERSION)];
         const uint32_t generation = g_layout.generation;
         reply[0] = (uint8_t) LVHB_PROTOCOL_VERSION;
         reply[1] = (uint8_t) (LVHB_PROTOCOL_VERSION >> 8U);
@@ -547,8 +566,33 @@ static void handle_frame(const uint8_t *frame, size_t payload_size) {
         reply[7] = (uint8_t) (generation >> 24U);
         reply[8] = (uint8_t) LVHB_MAX_REPORT_DESCRIPTOR;
         reply[9] = (uint8_t) (LVHB_MAX_REPORT_DESCRIPTOR >> 8U);
-        memcpy(reply + 10, BRIDGE_FIRMWARE_VERSION, sizeof(BRIDGE_FIRMWARE_VERSION) - 1U);
+        reply[10] = (uint8_t) ((bridge_pairing_required() ? LVHB_AUTH_PAIRING_REQUIRED : 0U) | (s_authorized ? LVHB_AUTH_AUTHORIZED : 0U));
+        bridge_pairing_new_nonce(reply + 11);
+        memcpy(reply + 11 + LVHB_NONCE_SIZE, s_device_id, LVHB_DEVICE_ID_SIZE);
+        memcpy(reply + 11 + LVHB_NONCE_SIZE + LVHB_DEVICE_ID_SIZE, BRIDGE_FIRMWARE_VERSION, sizeof(BRIDGE_FIRMWARE_VERSION) - 1U);
         send_frame(LVHB_MSG_HELLO_ACK, reply, sizeof(reply) - 1U);
+        break;
+      }
+    case LVHB_MSG_AUTH:
+      if (payload_size >= LVHB_KEY_ID_SIZE + LVHB_MAC_SIZE && bridge_pairing_verify(payload, payload + LVHB_KEY_ID_SIZE)) {
+        s_authorized = true;
+        s_session_has_key = true;
+        memcpy(s_session_key, payload, LVHB_KEY_ID_SIZE);
+        s_last_host_frame = xTaskGetTickCount();
+        s_neutralized = false;
+        send_ack(type, sequence, LVHB_STATUS_OK);
+      } else {
+        send_ack(type, sequence, LVHB_STATUS_UNAUTHORIZED);
+      }
+      break;
+    case LVHB_MSG_PAIR:
+    case LVHB_MSG_CONFIG_SET:
+      send_ack(type, sequence, bridge_pairing_request(type, payload, payload_size));
+      break;
+    case LVHB_MSG_CONFIG_GET:
+      {
+        uint8_t reply[2U + LVHB_MAX_PAIRINGS * (LVHB_KEY_ID_SIZE + 1U + LVHB_MAX_PAIRING_NAME)];
+        send_frame(LVHB_MSG_CONFIG, reply, bridge_pairing_config(reply, sizeof(reply)));
         break;
       }
     case LVHB_MSG_LAYOUT_BEGIN:
@@ -573,7 +617,7 @@ static void handle_frame(const uint8_t *frame, size_t payload_size) {
         break;
       }
     case LVHB_MSG_INPUT_REPORT:
-      if (payload_size >= 2U && payload[0] < LVHB_MAX_SLOTS && g_layout.slots[payload[0]].kind != LVHB_SLOT_NONE) {
+      if (s_authorized && payload_size >= 2U && payload[0] < LVHB_MAX_SLOTS && g_layout.slots[payload[0]].kind != LVHB_SLOT_NONE) {
         bridge_slot_submit(payload[0], payload + 1, (uint16_t) (payload_size - 1U));
         bridge_led_activity();
       }
@@ -625,6 +669,10 @@ static void on_cdc_line_state(int itf, cdcacm_event_t *event) {
     s_last_host_frame = xTaskGetTickCount();
   }
   s_host_connected = connected;
+  if (!connected) {
+    // A closed port ends the session; the next program must authenticate again.
+    s_authorized = false;
+  }
   notify_control_task();
 }
 
@@ -691,10 +739,32 @@ static void control_task(void *argument) {
       }
     }
 
+    if (!s_host_connected) {
+      bridge_pairing_cancel();
+    }
+    bridge_pairing_event_t pairing;
+    bridge_pairing_poll(&pairing);
+    if (pairing.authorize) {
+      s_authorized = true;
+      s_session_has_key = true;
+      memcpy(s_session_key, pairing.key_id, LVHB_KEY_ID_SIZE);
+      s_last_host_frame = xTaskGetTickCount();
+    }
+    if (pairing.config_changed && s_authorized && !bridge_pairing_session_valid(s_session_has_key, s_session_key)) {
+      s_authorized = false;
+    }
+    if (pairing.result_size != 0U && s_host_connected) {
+      send_frame(LVHB_MSG_CONFIRM_RESULT, pairing.result, pairing.result_size);
+    }
+
     check_host_watchdog();
 
     bridge_led_state_t led = BRIDGE_LED_OFF;
-    if (mounted) {
+    if (bridge_pairing_button_held()) {
+      led = BRIDGE_LED_BUTTON_HELD;
+    } else if (bridge_pairing_pending()) {
+      led = BRIDGE_LED_CONFIRM;
+    } else if (mounted) {
       led = !s_host_connected ? BRIDGE_LED_IDLE
             : !layout_has_slots() ? BRIDGE_LED_HOST_OPEN
             : s_neutralized ? BRIDGE_LED_HOST_SILENT
@@ -708,6 +778,8 @@ void app_main(void) {
   uint8_t mac[6];
   char serial[LVHB_MAX_STRING + 1U];
   ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_WIFI_STA));
+  memcpy(s_device_id, mac, LVHB_DEVICE_ID_SIZE);
+  bridge_pairing_init(s_device_id);
   snprintf(serial, sizeof(serial), LVHB_SERIAL_PREFIX "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   bridge_descriptors_set_serial(serial);
   set_boot_layout(&g_layout);

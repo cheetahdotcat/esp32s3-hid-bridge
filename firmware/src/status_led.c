@@ -81,6 +81,10 @@ static uint32_t plain_level(bridge_led_state_t state, TickType_t now) {
       return (ms / 200U) & 1U;
     case BRIDGE_LED_HOST_OPEN:
       return (ms / 1000U) & 1U;
+    case BRIDGE_LED_CONFIRM:
+      return (ms / 100U) & 1U;
+    case BRIDGE_LED_BUTTON_HELD:
+      return 1U;
     default:
       return 0U;
   }
@@ -117,6 +121,12 @@ void bridge_led_update(bridge_led_state_t state) {
       break;
     case BRIDGE_LED_HOST_OPEN:
       rgb = LED_LEVEL;  // blue
+      break;
+    case BRIDGE_LED_CONFIRM:
+      rgb = ((now * portTICK_PERIOD_MS / 250U) & 1U) ? ((LED_LEVEL << 16) | LED_LEVEL) : 0U;  // blinking purple
+      break;
+    case BRIDGE_LED_BUTTON_HELD:
+      rgb = (LED_LEVEL << 16) | (LED_LEVEL << 8) | LED_LEVEL;  // white
       break;
     default:
       rgb = 0;

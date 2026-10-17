@@ -5,11 +5,12 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp32_bridge_protocol.h"
 
-#define BRIDGE_FIRMWARE_VERSION "0.1.2"
+#define BRIDGE_FIRMWARE_VERSION "0.2.0"
 
 /// Interface numbers 0 and 1 always belong to CDC so the host COM port stays put.
 #define BRIDGE_CDC_INTERFACES 2U
@@ -149,6 +150,8 @@ typedef enum {
   BRIDGE_LED_HOST_OPEN,  ///< Host program connected, no slots yet (blue).
   BRIDGE_LED_ACTIVE,  ///< Slots enumerated and host alive (green).
   BRIDGE_LED_HOST_SILENT,  ///< Host went quiet, neutral reports sent (amber).
+  BRIDGE_LED_CONFIRM,  ///< A request waits for the BOOT button (purple).
+  BRIDGE_LED_BUTTON_HELD,  ///< BOOT is held past a short press; release now or keep holding to reset (white).
 } bridge_led_state_t;
 
 /**
@@ -167,3 +170,98 @@ void bridge_led_activity(void);
  * @param state Current bridge state.
  */
 void bridge_led_update(bridge_led_state_t state);
+
+/**
+ * @brief Outcome of one pairing poll.
+ */
+typedef struct {
+  size_t result_size;  ///< CONFIRM_RESULT payload size, 0 when there is nothing to send.
+  uint8_t result[2U + LVHB_KEY_ID_SIZE + LVHB_SECRET_SIZE];  ///< CONFIRM_RESULT payload.
+  bool authorize;  ///< A pairing was confirmed; authorize the session with #key_id.
+  uint8_t key_id[LVHB_KEY_ID_SIZE];  ///< Key id of the new pairing.
+  bool config_changed;  ///< Pairings or the pairing requirement changed; re-check the session.
+} bridge_pairing_event_t;
+
+/**
+ * @brief Load stored pairings and set up the BOOT button.
+ *
+ * @param device_id Bridge identity bound into every authentication, #LVHB_DEVICE_ID_SIZE bytes.
+ */
+void bridge_pairing_init(const uint8_t *device_id);
+
+/**
+ * @brief Check whether layout and input frames need an authenticated session.
+ *
+ * @return `true` unless the user turned pairing off.
+ */
+bool bridge_pairing_required(void);
+
+/**
+ * @brief Draw a fresh authentication challenge.
+ *
+ * @param nonce Receives #LVHB_NONCE_SIZE bytes.
+ */
+void bridge_pairing_new_nonce(uint8_t *nonce);
+
+/**
+ * @brief Check an AUTH answer against the current challenge.
+ *
+ * @param key_id Pairing key id.
+ * @param mac HMAC-SHA256 from the host.
+ * @return `true` when the answer is valid.
+ */
+bool bridge_pairing_verify(const uint8_t *key_id, const uint8_t *mac);
+
+/**
+ * @brief Check whether a session is still allowed after a configuration change.
+ *
+ * @param has_key Whether the session authenticated with a key.
+ * @param key_id Key id of the session.
+ * @return `true` when the session may keep sending layout and input frames.
+ */
+bool bridge_pairing_session_valid(bool has_key, const uint8_t *key_id);
+
+/**
+ * @brief Arm a PAIR or CONFIG_SET request that waits for the BOOT button.
+ *
+ * @param type Message type.
+ * @param payload Request payload.
+ * @param size Payload size.
+ * @return #lvhb_status for the immediate ACK.
+ */
+uint8_t bridge_pairing_request(uint8_t type, const uint8_t *payload, size_t size);
+
+/**
+ * @brief Drop a request whose host went away.
+ */
+void bridge_pairing_cancel(void);
+
+/**
+ * @brief Check whether a request waits for the BOOT button.
+ *
+ * @return `true` while a request is armed.
+ */
+bool bridge_pairing_pending(void);
+
+/**
+ * @brief Check whether BOOT is held longer than a confirming press.
+ *
+ * @return `true` while held.
+ */
+bool bridge_pairing_button_held(void);
+
+/**
+ * @brief Build a CONFIG payload.
+ *
+ * @param out Destination.
+ * @param capacity Destination size.
+ * @return Payload size.
+ */
+size_t bridge_pairing_config(uint8_t *out, size_t capacity);
+
+/**
+ * @brief Handle the BOOT button and confirmation timeouts; call every control tick.
+ *
+ * @param event Receives what the control task must do.
+ */
+void bridge_pairing_poll(bridge_pairing_event_t *event);
