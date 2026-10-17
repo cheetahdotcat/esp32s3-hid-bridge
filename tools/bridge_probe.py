@@ -191,7 +191,9 @@ class Bridge:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
-                chunk = self.port.read(256)
+                # Return as soon as bytes arrive: pyserial drops a partial read when the port vanishes,
+                # which happens right after the bridge acknowledges a layout commit.
+                chunk = self.port.read(self.port.in_waiting or 1)
             except serial.SerialException:
                 return
             self.buffer += chunk
