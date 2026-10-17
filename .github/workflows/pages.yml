@@ -44,7 +44,7 @@ jobs:
       - name: Assemble site
         run: |
           version=$(sed -n 's/^#define BRIDGE_FIRMWARE_VERSION "\(.*\)"$/\1/p' firmware/src/bridge.h)
-          build=firmware/.pio/build/esp32-s3-devkitc-1
+          build=firmware/.pio/build/esp32-s3-led-gpio21
           mkdir -p site/firmware
           python ~/.platformio/packages/tool-esptoolpy/esptool.py --chip esp32s3 merge_bin \
             -o site/firmware/lvhb-esp32s3.bin --flash_mode dio --flash_freq 80m --flash_size 4MB \
