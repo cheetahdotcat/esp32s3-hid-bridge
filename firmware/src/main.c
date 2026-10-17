@@ -575,6 +575,7 @@ static void handle_frame(const uint8_t *frame, size_t payload_size) {
     case LVHB_MSG_INPUT_REPORT:
       if (payload_size >= 2U && payload[0] < LVHB_MAX_SLOTS && g_layout.slots[payload[0]].kind != LVHB_SLOT_NONE) {
         bridge_slot_submit(payload[0], payload + 1, (uint16_t) (payload_size - 1U));
+        bridge_led_activity();
       }
       break;
     case LVHB_MSG_PING:
@@ -691,6 +692,15 @@ static void control_task(void *argument) {
     }
 
     check_host_watchdog();
+
+    bridge_led_state_t led = BRIDGE_LED_OFF;
+    if (mounted) {
+      led = !s_host_connected ? BRIDGE_LED_IDLE
+            : !layout_has_slots() ? BRIDGE_LED_HOST_OPEN
+            : s_neutralized ? BRIDGE_LED_HOST_SILENT
+                            : BRIDGE_LED_ACTIVE;
+    }
+    bridge_led_update(led);
   }
 }
 
@@ -704,6 +714,7 @@ void app_main(void) {
   bridge_descriptors_build();
 
   s_tx_mutex = xSemaphoreCreateMutex();
+  bridge_led_init();
 
   const void *device;
   const uint8_t *configuration;

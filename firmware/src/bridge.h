@@ -9,7 +9,7 @@
 
 #include "esp32_bridge_protocol.h"
 
-#define BRIDGE_FIRMWARE_VERSION "0.1.1"
+#define BRIDGE_FIRMWARE_VERSION "0.1.2"
 
 /// Interface numbers 0 and 1 always belong to CDC so the host COM port stays put.
 #define BRIDGE_CDC_INTERFACES 2U
@@ -139,3 +139,31 @@ void xinput_reset_all(void);
  * @param slot Slot index.
  */
 void bridge_slot_in_complete(uint8_t slot);
+
+/**
+ * @brief Status LED colour.
+ */
+typedef enum {
+  BRIDGE_LED_OFF,  ///< USB not configured.
+  BRIDGE_LED_IDLE,  ///< Configured, no host program has the port open (off).
+  BRIDGE_LED_HOST_OPEN,  ///< Host program connected, no slots yet (blue).
+  BRIDGE_LED_ACTIVE,  ///< Slots enumerated and host alive (green).
+  BRIDGE_LED_HOST_SILENT,  ///< Host went quiet, neutral reports sent (amber).
+} bridge_led_state_t;
+
+/**
+ * @brief Set up the onboard status LED; a no-op when the board has none.
+ */
+void bridge_led_init(void);
+
+/**
+ * @brief Record host traffic; the next update blinks the LED.
+ */
+void bridge_led_activity(void);
+
+/**
+ * @brief Refresh the LED, called periodically from the control task.
+ *
+ * @param state Current bridge state.
+ */
+void bridge_led_update(bridge_led_state_t state);
