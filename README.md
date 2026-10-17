@@ -5,6 +5,7 @@ An ESP32-S3 plugged into the streaming host enumerates as **real USB controllers
 Windows binds its inbox drivers to them (`xusb22` for XInput, `hidclass` for HID).
 
 **Flash a board from your browser:** https://cheetahdotcat.github.io/esp32s3-hid-bridge/
+Firmware images are also attached to each [release](https://github.com/cheetahdotcat/esp32s3-hid-bridge/releases).
 
 ```
 Moonlight client ──network──▶ Sunshine ──libvirtualhid (BackendKind::esp32_bridge)
@@ -67,6 +68,8 @@ adds **ESP32-S3 USB Bridge** as a Windows gamepad backend (`gamepad_driver = esp
   and does not show Virtual HID Broker notices.
 - `esp32_bridge_port` sets the COM port; leave it empty to auto-detect.
 - Its CI builds a Windows installer (Actions → `build-Windows-AMD64` artifact).
+- The bridge has no pen or touchscreen slot, so in this mode Sunshine does not
+  advertise native pen/touch and Moonlight sends that input as mouse events.
 
 Plug the bridge in before starting Sunshine. Sunshine creates its keyboard and mouse at
 startup, so they take one bridge slot and leave one for a gamepad.
@@ -136,9 +139,25 @@ Profile mapping:
 
 ```bash
 cd firmware
-~/.platformio/penv/bin/pio run                       # build
-~/.platformio/penv/bin/pio run -t upload --upload-port /dev/ttyUSB0
+~/.platformio/penv/bin/pio run                       # build the default image
+~/.platformio/penv/bin/pio run -t upload --upload-port /dev/ttyACM0
 ```
+
+| Environment | Status LED | Boards |
+|---|---|---|
+| `esp32-s3-led-gpio21` (default, web flasher) | single-colour, GPIO21, active low | Seeed XIAO ESP32S3 |
+| `esp32-s3-devkitc-1` | WS2812 on GPIO48 | ESP32-S3-DevKitC-1 v1.0 and most clones |
+
+Both images run on any supported board; only the LED differs. Other pins can be
+set with `-DBRIDGE_LED_GPIO=<pin>` (`-1` disables the LED), `-DBRIDGE_LED_KIND=1`
+(WS2812) or `2` (plain GPIO), and `-DBRIDGE_LED_ACTIVE_LOW`.
+
+| Bridge state | Single-colour LED | WS2812 |
+|---|---|---|
+| No host program has the port open | off | off |
+| Host connected, no slots yet | slow blink (1 s) | blue |
+| Slots enumerated, host alive | on, blinks off on input | green, blinks off on input |
+| Host silent, neutral reports sent | fast blink (200 ms) | amber |
 
 The **native** USB port is the bridge. Once the firmware runs, TinyUSB owns that
 port, so the ROM's USB-Serial/JTAG (`303a:1001`) disappears. To reflash, hold
@@ -160,7 +179,7 @@ python3 tools/bridge_probe.py reset
 
 Verified here:
 - The firmware builds warning-free. The host backend and its tests build with
-  `-Wall -Wextra -Wpedantic -Werror`, and all 29 tests pass, including under
+  `-Wall -Wextra -Wpedantic -Werror`, and all 30 tests pass, including under
   ThreadSanitizer with no races. A test walks the keyboard/mouse descriptor to
   confirm it declares exactly the report sizes the code sends.
 - Windows sources compile for `x86_64-windows-gnu` (zig/MinGW).
@@ -176,6 +195,11 @@ Verified on hardware (ESP32-S3 rev v0.2, Linux host, 2026-10-16):
   and rumble output reports arrived at the `GamepadOutput` callback.
 - Keyboard+mouse slot: enumerates as a `hid-generic` keyboard and mouse, and
   typed text arrives correctly in the focused window (`bridge_probe.py kbm`).
+
+Verified on Windows (2026-10-16, firmware 0.1.1):
+- The composite device enumerates and the CDC port appears (COM63).
+- Sunshine with `gamepad_driver = esp32_bridge` opens the port, completes the
+  handshake, and re-enumerates the bridge with its keyboard+mouse slot.
 
 Not yet verified:
 1. `xusb22` binding to an XInput interface inside a **composite** device via
