@@ -22,6 +22,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check protocol header
+        run: |
+          c++ -std=c++23 -Wall -Wextra -Werror -Ifirmware/src -Ilibvirtualhid/src tools/protocol_check.cpp -o protocol_check
+          ./protocol_check
+
       - name: Build firmware
         run: |
           pip install platformio==6.2.0

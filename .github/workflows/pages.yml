@@ -22,7 +22,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          # Only the bridge protocol header is needed from libvirtualhid.
+          # libvirtualhid's protocol header is checked against the firmware's copy.
           submodules: true
 
       - name: Setup Python
@@ -35,6 +35,11 @@ jobs:
         with:
           path: ~/.platformio
           key: platformio-${{ hashFiles('firmware/platformio.ini', 'firmware/src/idf_component.yml', 'firmware/sdkconfig.defaults') }}
+
+      - name: Check protocol header
+        run: |
+          c++ -std=c++23 -Wall -Wextra -Werror -Ifirmware/src -Ilibvirtualhid/src tools/protocol_check.cpp -o protocol_check
+          ./protocol_check
 
       - name: Build firmware
         run: |
